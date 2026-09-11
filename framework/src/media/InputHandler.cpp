@@ -37,7 +37,9 @@ InputHandler::InputHandler() :
 	mState(BUFFER_STATE_EMPTY),
 	mTotalBytes(0),
 	mProcessBuffer(nullptr),
-	mProcessBufferSize(0)
+	mProcessBufferSize(0),
+	mOutputPeriodBytes(0),
+	mOutputPeriodOffset(0)
 {
 	mWorkerStackSize = CONFIG_INPUT_DATASOURCE_STACKSIZE;
 }
@@ -52,7 +54,7 @@ void InputHandler::setInputDataSource(std::shared_ptr<InputDataSource> source)
 	mInputDataSource = source;
 }
 
-bool InputHandler::doStandBy(size_t buffSize)
+bool InputHandler::doStandBy(size_t buffSize, unsigned channels, unsigned sampleRate, int format, size_t periodBytes)
 {
 	auto mp = getPlayer();
 	if (!mp) {
@@ -63,7 +65,7 @@ bool InputHandler::doStandBy(size_t buffSize)
 	std::thread wk = std::thread([=]() {
 		medvdbg("InputHandler::doStandBy thread enter\n");
 		player_event_t event;
-		if (open(buffSize)) {
+		if (open(buffSize, channels, sampleRate, format, periodBytes)) {
 			event = PLAYER_EVENT_SOURCE_PREPARED;
 		} else {
 			event = PLAYER_EVENT_SOURCE_OPEN_FAILED;
@@ -76,8 +78,16 @@ bool InputHandler::doStandBy(size_t buffSize)
 	return true;
 }
 
-bool InputHandler::open(size_t buffSize)
+bool InputHandler::open(size_t buffSize, unsigned channels, unsigned sampleRate, int format, size_t periodBytes)
 {
+	pcm_stream_format_t outputFormat = {
+		channels,
+		sampleRate,
+		static_cast<pcm_format>(format)
+	};
+	mOutput = outputFormat;
+	mOutputPeriodBytes = periodBytes;
+
 	// Open stream handler and start buffering
 	if (!StreamHandler::open(buffSize)) {
 		meddbg("StreamHandler::open failed!\n");
@@ -142,6 +152,18 @@ bool InputHandler::start()
 			mProcessBufferSize = 0;
 			return false;
 		}
+	}
+
+	pcm_stream_format_t userFormat = {
+		mInputDataSource->getChannels(),
+		mInputDataSource->getSampleRate(),
+		static_cast<pcm_format>(mInputDataSource->getPcmFormat())
+	};
+
+	mUser = userFormat;
+
+	if (!mResampler.configure(mUser, mOutput)) {
+		return false;
 	}
 
 	bool ret = StreamHandler::start();
@@ -320,7 +342,19 @@ ssize_t InputHandler::writeToStreamBuffer(unsigned char *buf, size_t size)
 			if (spaces == 0) {
 				sleepWorker();
 			}
-			sizePCM = std::min(sizePCM, mBufferWriter->sizeOfSpace());
+			size_t sourceCapacity = mResampler.isConfigured() ?
+				mResampler.getInputBytesForOutput(spaces) : spaces;
+			if (sizePCM > sourceCapacity) {
+				sizePCM = sourceCapacity;
+			}
+			if (mResampler.isConfigured()) {
+				size_t sourceFrameBytes = mResampler.getSourceFrameBytes();
+				sizePCM -= sizePCM % sourceFrameBytes;
+			}
+			if (sizePCM == 0) {
+				continue;
+			}
+
 			ret = getPCM(buffES, sizeES, &usedES, &buffPCM, &sizePCM);
 			if (ret < 0) {
 				meddbg("getPCM failed! error: %d\n", ret);
@@ -332,14 +366,36 @@ ssize_t InputHandler::writeToStreamBuffer(unsigned char *buf, size_t size)
 			}
 
 			// write PCM data to stream buffer
-			size_t written = mBufferWriter->write(buffPCM, sizePCM);
-			if (written != sizePCM) {
+			size_t written = writePcmToStreamBuffer(buffPCM, sizePCM);
+			if (written < 0) {
 				meddbg("End of writting!\n");
 				return EOF;
 			}
 		}
 	}
 	return size;
+}
+
+ssize_t InputHandler::writePcmToStreamBuffer(const unsigned char *buf, size_t size)
+{
+	const unsigned char *output = buf;
+	ssize_t outputBytes = size;
+	if (mResampler.isConfigured()) {
+		outputBytes = mResampler.convert(buf, size, &output);
+		if (outputBytes < 0) {
+			meddbg("Failed to convert source PCM\n");
+			return EOF;
+		}
+	}
+
+	size_t written = mBufferWriter->write(const_cast<unsigned char *>(output), (size_t)outputBytes);
+	if (written != (size_t)outputBytes) {
+		return EOF;
+	}
+	if (mOutputPeriodBytes > 0) {
+		mOutputPeriodOffset = (mOutputPeriodOffset + written % mOutputPeriodBytes) % mOutputPeriodBytes;
+	}
+	return outputBytes;
 }
 
 bool InputHandler::registerCodec(audio_type_t audioType, unsigned int channels, unsigned int sampleRate)
