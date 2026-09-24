@@ -280,7 +280,7 @@ void MediaPlayerImpl::preparePlayer(player_result_t &ret, sem_t &syncSem)
 
 	mInputHandler.set_output_audio_capabilities(sampleRate, channels, format);
 
-	if (!mInputHandler.startBuffering()) {
+	if (!mInputHandler.startBuffering(mBufSize)) {
 		meddbg("MediaPlayer prepare fail : start buffering fail\n");
 		ret = PLAYER_ERROR_INTERNAL_OPERATION_FAILED;
 		delete[] mBuffer;
@@ -1290,7 +1290,7 @@ void MediaPlayerImpl::notifyAsync(player_event_t event)
 
 		mInputHandler.set_output_audio_capabilities(sampleRate, channels, format);
 
-		if (!mInputHandler.startBuffering()) {
+		if (!mInputHandler.startBuffering(mBufSize)) {
 			meddbg("MediaPlayer prepare fail : start buffering fail\n");
 			return notifyObserver(PLAYER_OBSERVER_COMMAND_ASYNC_PREPARED, PLAYER_ERROR_INTERNAL_OPERATION_FAILED);
 		}

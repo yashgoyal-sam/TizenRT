@@ -26,7 +26,7 @@
 
 #include <media/InputDataSource.h>
 #include "StreamHandler.h"
-#include "PCMSampler.h"
+#include "Resampler.h"
 
 #include "Decoder.h"
 #include "Demuxer.h"
@@ -53,7 +53,7 @@ public:
 	ssize_t read(unsigned char *buf, size_t size, std::chrono::milliseconds timeout = std::chrono::milliseconds(0));
 	void setLoop(bool loop);
 	void setBufferState(buffer_state_t state);
-	bool startBuffering();
+	bool startBuffering(size_t size);
 	void set_output_audio_capabilities(unsigned int sampleRate, unsigned int channels, int format);
 
 	virtual void onBufferOverrun() override;
@@ -80,7 +80,6 @@ private:
 	ssize_t getPCM(unsigned char *buf, size_t size, size_t *used, unsigned char **out, size_t *expect);
 	size_t fetchData(unsigned char *buf, size_t size, size_t *used, unsigned char **out, size_t *expect);
 	ssize_t readFromSource(unsigned char *buf, size_t size);
-	ssize_t writePcmToStreamBuffer(const unsigned char *buf, size_t size);
 
 	std::mutex mMutex;
 	std::condition_variable mCondv;
@@ -94,11 +93,10 @@ private:
 	size_t mTotalBytes;
 	std::unique_ptr<unsigned char[]> mProcessBuffer;
 	size_t mProcessBufferSize;
-	pcm_stream_format_s mUser;
-	pcm_stream_format_s mOutput;
-	PCMSampler mResampler;
-	size_t mOutputPeriodBytes;
-	size_t mOutputPeriodOffset;
+	unsigned int mOutputChannels;
+	unsigned int mOutputSampleRate;
+	unsigned int mOutputFormat;
+	std::shared_ptr<Resampler> mResampler;
 };
 } // namespace stream
 } // namespace media
