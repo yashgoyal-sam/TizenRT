@@ -269,7 +269,7 @@ void MediaPlayerImpl::preparePlayer(player_result_t &ret, sem_t &syncSem)
 	unsigned int channels;
 	int format;
 
-	if (!get_output_audio_capabilities(&sampleRate, &channels, &format)) {
+	if (get_output_audio_capabilities(&sampleRate, &channels, &format) != AUDIO_MANAGER_SUCCESS) {
 		meddbg("MediaPlayer prepare fail : get_output_audio_capabilities fail\n");
 		ret = PLAYER_ERROR_INTERNAL_OPERATION_FAILED;
 		delete[] mBuffer;
@@ -1310,9 +1310,9 @@ void MediaPlayerImpl::playback(std::chrono::milliseconds timeout, uint8_t playba
 
 	// ToDo: Handle underrun properly in future when we support streaming player
 	ssize_t num_read = mInputHandler.read(mBuffer, static_cast<size_t>(mBufSize), timeout);
-	medvdbg("num_read : %d player : %x\n", num_read, &mPlayer);
+	meddbg("num_read : %d player : %x\n", num_read, &mPlayer);
 	if (num_read > 0) {
-		int ret = start_audio_stream_out(mBuffer, num_read, playback_idx, mStreamInfo->id);
+		int ret = start_audio_stream_out(mBuffer, get_card_output_bytes_to_frame(num_read), playback_idx, mStreamInfo->id);
 		if (ret < 0) {
 			PlayerWorker &mpw = PlayerWorker::getWorker();
 			switch (ret) {

@@ -28,6 +28,8 @@
 #include "Decoder.h"
 #include "Demuxer.h"
 
+#define bytes_per_frame 2
+
 namespace media {
 namespace stream {
 
@@ -143,7 +145,7 @@ bool InputHandler::startBuffering(size_t buffSize)
 		return false;
 	}
 
-	if (!mResampler->configure(mInputDataSource->getChannels(), mInputDataSource->getSampleRate(), static_cast<pcm_format>(mInputDataSource->getPcmFormat()), 
+	if (!mResampler->configure(mInputDataSource->getChannels(), mInputDataSource->getSampleRate(), bytes_per_frame, 
 								mOutputChannels, mOutputSampleRate, mOutputFormat, buffSize)) {
 		meddbg("Resampler configuration failed\n");
 		mResampler.reset();
@@ -207,9 +209,18 @@ bool InputHandler::processWorker()
 					if (mBufferWriter->sizeOfSpace() == 0) {
 						sleepWorker();
 					}
-					size_t needToWrite = std::min(output.size, mBufferWriter->sizeOfSpace());
+					size_t needToWrite = std::min(output.size - tmp, mBufferWriter->sizeOfSpace());
+					if (needToWrite == 0) {
+						break;
+					}
 					size_t written = mBufferWriter->write(const_cast<unsigned char *>(output.data + tmp), needToWrite);
-					tmp += needToWrite;
+					meddbg("[DRAIN] bytes write inside SB = %d\n", written);
+					if (written != needToWrite) {
+						meddbg("End of writting\n");
+						return EOF;
+					} 
+					meddbg("bytes write inside SB = %d\n", written);
+					tmp += written;
 				}
 			}
 			case Resampler::Result::NEED_INPUT: {
@@ -376,11 +387,14 @@ ssize_t InputHandler::writeToStreamBuffer(unsigned char *buf, size_t size)
 
 			unsigned char *buffPCM = buf;
 			size_t writableBytes = mResampler->getPendingInputBytes();
+			meddbg("writable bytes = %d\n", writableBytes);
+
 			if (writableBytes == 0) {
 				meddbg("Invalid Resampler state\n");
 				return -1;
 			}
 			size_t sizePCM = std::min(mProcessBufferSize, writableBytes);
+			meddbg("sizePCM = %d\n", sizePCM);
 
 			ret = getPCM(buffES, sizeES, &usedES, &buffPCM, &sizePCM);
 			if (ret < 0) {
@@ -407,11 +421,24 @@ ssize_t InputHandler::writeToStreamBuffer(unsigned char *buf, size_t size)
 			}
 			
 			Resampler::ConstBufferView output = mResampler->output();
+			meddbg("output size = %d\n", output.size);
 			size_t tmp = 0;
 			while(tmp < output.size) {
-				size_t needToWrite = std::min(output.size, mBufferWriter->sizeOfSpace());
+				if (mBufferWriter->sizeOfSpace() == 0) {
+					sleepWorker();
+				}
+				size_t needToWrite = std::min(output.size - tmp, mBufferWriter->sizeOfSpace());
+				meddbg("needToWrite = %d\n", needToWrite);
+				if (needToWrite == 0) {
+					break;
+				}
 				size_t written = mBufferWriter->write(const_cast<unsigned char *>(output.data + tmp), needToWrite);
-				tmp += needToWrite;
+				meddbg("bytes write inside SB = %d\n", written);
+				if (written != needToWrite) {
+					meddbg("End of writting\n");
+					return EOF;
+				}
+				tmp += written;
 			}
 			if(!mResampler->consumeOutput()) {
 				meddbg("Resampler::consumeOutput failed!\n");

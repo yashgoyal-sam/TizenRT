@@ -79,6 +79,8 @@ bool Resampler::configure(unsigned int inputChannels, unsigned int inputSampleRa
 {
 	release();
 
+	meddbg("ipch = %d, ipsr = %d, ipf = %d, opch = %d, opsr = %d, opf = %d\n", inputChannels, inputSampleRate, inputFormat, outputChannels, outputSampleRate, outputFormat);
+
 	if (inputChannels == 0 || inputSampleRate == 0 || inputFormat == 0 ||
 		outputChannels == 0 || outputSampleRate == 0 || outputFormat == 0 ||
 		outputPeriodBytes == 0) {
@@ -127,6 +129,7 @@ bool Resampler::configure(unsigned int inputChannels, unsigned int inputSampleRa
 	size_t inputBytesPerProcess = mInputFramesPerProcess * mInputChannels * mInputFormat;
 	size_t rechannelBytesPerProcess = mInputFramesPerProcess * mOutputChannels * mOutputFormat;
 	mRechannelBufferSize = std::max(inputBytesPerProcess, rechannelBytesPerProcess);
+	meddbg("mRechannelBuffer size = %d\n", mRechannelBufferSize);
 	mRechannelBuffer = std::make_unique<unsigned char[]>(mRechannelBufferSize);
 	if (!mRechannelBuffer) {
 		meddbg("Rechannel buffer allocation failed: %lu bytes\n", static_cast<unsigned long>(mRechannelBufferSize));
@@ -151,6 +154,7 @@ bool Resampler::configure(unsigned int inputChannels, unsigned int inputSampleRa
 		}
 
 		mResampleBufferSize = outputPeriodBytes;
+		meddbg("mResampleBufferSize size = %d\n", mResampleBufferSize);
 		mResampleBuffer = std::make_unique<unsigned char[]>(mResampleBufferSize);
 		if (!mResampleBuffer) {
 			meddbg("Resample buffer allocation failed: %lu bytes\n", static_cast<unsigned long>(mResampleBufferSize));
@@ -162,7 +166,7 @@ bool Resampler::configure(unsigned int inputChannels, unsigned int inputSampleRa
 	mState = State::IDLE;
 	reset();
 
-	medvdbg("Resampler configured: %u/%u -> %u/%u, input frames = %lu, output frames = %lu frames\n",
+	meddbg("Resampler configured: %u/%u -> %u/%u, input frames = %lu, output frames = %lu frames\n",
 			mInputChannels, mInputSampleRate, mOutputChannels, mOutputSampleRate, static_cast<unsigned long>(mInputFramesPerProcess), static_cast<unsigned long>(mOutputFramesPerProcess));
 
 	return true;
