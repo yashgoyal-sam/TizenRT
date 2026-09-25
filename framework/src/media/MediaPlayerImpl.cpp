@@ -265,22 +265,22 @@ void MediaPlayerImpl::preparePlayer(player_result_t &ret, sem_t &syncSem)
 		return;
 	}
 
-	unsigned int sampleRate;
-	unsigned int channels;
-	int format;
+	unsigned int outputSampleRate = get_output_sampleRate();
+	unsigned int outputChannels = get_output_channels();
+	unsigned int outputFormat = get_output_format();
 
-	if (get_output_audio_capabilities(&sampleRate, &channels, &format) != AUDIO_MANAGER_SUCCESS) {
-		meddbg("MediaPlayer prepare fail : get_output_audio_capabilities fail\n");
-		ret = PLAYER_ERROR_INTERNAL_OPERATION_FAILED;
-		delete[] mBuffer;
-		mBuffer = nullptr;
-		notifySync(syncSem);
-		return;
-	}
+	// if (get_output_audio_capabilities(&outputSampleRate, &outputChannels, &outputFormat) != AUDIO_MANAGER_SUCCESS) {
+	// 	meddbg("MediaPlayer prepare fail : get_output_audio_capabilities fail\n");
+	// 	ret = PLAYER_ERROR_INTERNAL_OPERATION_FAILED;
+	// 	delete[] mBuffer;
+	// 	mBuffer = nullptr;
+	// 	notifySync(syncSem);
+	// 	return;
+	// }
 
-	mInputHandler.set_output_audio_capabilities(sampleRate, channels, format);
+	// mInputHandler.set_output_audio_capabilities(sampleRate, channels, format);
 
-	if (!mInputHandler.startBuffering(mBufSize)) {
+	if (!mInputHandler.startBuffering(outputSampleRate, outputChannels, outputFormat, mBufSize)) {
 		meddbg("MediaPlayer prepare fail : start buffering fail\n");
 		ret = PLAYER_ERROR_INTERNAL_OPERATION_FAILED;
 		delete[] mBuffer;
@@ -1279,18 +1279,18 @@ void MediaPlayerImpl::notifyAsync(player_event_t event)
 			return notifyObserver(PLAYER_OBSERVER_COMMAND_ASYNC_PREPARED, PLAYER_ERROR_INTERNAL_OPERATION_FAILED);
 		}
 
-		unsigned int sampleRate;
-		unsigned int channels;
-		int format;
+		unsigned int outputSampleRate = get_output_sampleRate();
+		unsigned int outputChannels = get_output_channels();
+		unsigned int outputFormat = get_output_format();
 
-		if (!get_output_audio_capabilities(&sampleRate, &channels, &format)) {
-			meddbg("MediaPlayer prepare fail : get_output_audio_capabilities fail\n");
-			return notifyObserver(PLAYER_OBSERVER_COMMAND_ASYNC_PREPARED, PLAYER_ERROR_INTERNAL_OPERATION_FAILED);
-		}
+		// if (!get_output_audio_capabilities(&sampleRate, &channels, &format)) {
+		// 	meddbg("MediaPlayer prepare fail : get_output_audio_capabilities fail\n");
+		// 	return notifyObserver(PLAYER_OBSERVER_COMMAND_ASYNC_PREPARED, PLAYER_ERROR_INTERNAL_OPERATION_FAILED);
+		// }
 
-		mInputHandler.set_output_audio_capabilities(sampleRate, channels, format);
+		// mInputHandler.set_output_audio_capabilities(sampleRate, channels, format);
 
-		if (!mInputHandler.startBuffering(mBufSize)) {
+		if (!mInputHandler.startBuffering(outputSampleRate, outputChannels, outputFormat, mBufSize)) {
 			meddbg("MediaPlayer prepare fail : start buffering fail\n");
 			return notifyObserver(PLAYER_OBSERVER_COMMAND_ASYNC_PREPARED, PLAYER_ERROR_INTERNAL_OPERATION_FAILED);
 		}

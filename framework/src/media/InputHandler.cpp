@@ -30,6 +30,26 @@
 
 #define bytes_per_frame 2
 
+#define AUDIO_FORMAT_TO_BITS(format)	\
+	({									\
+		unsigned int __bits;			\
+		switch (format) {				\
+		case AUDIO_FORMAT_TYPE_S32_LE:	\
+			__bits = 32;				\
+			break;						\
+		case AUDIO_FORMAT_TYPE_S16_LE:	\
+			__bits = 16;				\
+			break;						\
+		case AUDIO_FORMAT_TYPE_S8:		\
+			__bits = 8;					\
+			break;						\
+		default:						\
+			__bits = 0;					\
+			break;						\
+		}								\
+		__bits;							\
+	})
+
 namespace media {
 namespace stream {
 
@@ -40,9 +60,6 @@ InputHandler::InputHandler() :
 	mTotalBytes(0),
 	mProcessBuffer(nullptr),
 	mProcessBufferSize(0),
-	mOutputChannels(0),
-	mOutputSampleRate(0),
-	mOutputFormat(0),
 	mResampler(nullptr)
 {
 	mWorkerStackSize = CONFIG_INPUT_DATASOURCE_STACKSIZE;
@@ -97,9 +114,15 @@ bool InputHandler::close()
 int InputHandler::seekTo(off_t offset)
 {
 	int ret = mInputDataSource->seekTo(offset);
-	if (ret == OK) {
-		mResampler->reset();
+	if (ret != OK) {
+        meddbg("Source seekTo failed. ret: %d\n", ret);
+        return ret;
 	}
+
+    if (mResampler) {
+        mResampler->reset();
+    }   
+
 	return ret;
 }
 
@@ -125,7 +148,7 @@ void InputHandler::resetWorker()
 	mResampler->reset();
 }
 
-bool InputHandler::startBuffering(size_t buffSize)
+bool InputHandler::startBuffering(unsigned int sampleRate, unsigned int channels, unsigned int format, size_t buffSize)
 {
 	if (!mProcessBuffer) {
 		mProcessBufferSize = mDecoder ? CONFIG_AUDIO_CODEC_RINGBUFFER_SIZE : mDemuxer ? CONFIG_DEMUX_BUFFER_SIZE : mStreamBuffer->getBufferSize();
@@ -145,8 +168,8 @@ bool InputHandler::startBuffering(size_t buffSize)
 		return false;
 	}
 
-	if (!mResampler->configure(mInputDataSource->getChannels(), mInputDataSource->getSampleRate(), bytes_per_frame, 
-								mOutputChannels, mOutputSampleRate, mOutputFormat, buffSize)) {
+	if (!mResampler->configure(mInputDataSource->getChannels(), mInputDataSource->getSampleRate(), (AUDIO_FORMAT_TO_BITS(mInputDataSource->getPcmFormat()) >> 3), 
+								channels, sampleRate, format, buffSize)) {
 		meddbg("Resampler configuration failed\n");
 		mResampler.reset();
 		mProcessBuffer.reset();
@@ -172,19 +195,8 @@ bool InputHandler::startBuffering(size_t buffSize)
 	return ret;
 }
 
-void InputHandler::set_output_audio_capabilities(unsigned int sampleRate, unsigned int channels, int format)
-{
-	mOutputChannels = channels;
-	mOutputSampleRate = sampleRate;
-	mOutputFormat = format;
-
-	meddbg("[OUTPUT] channels = %d, sampleRate = %d, format = %d\n", mOutputChannels, mOutputSampleRate, mOutputFormat);
-	return;
-}
-
 bool InputHandler::processWorker()
 {
-	meddbg("enter processworker\n");
 	/* This should not be happened */
 	if (!mProcessBuffer) {
 		meddbg("mProcessBuffer is not allocated\n");
@@ -203,7 +215,7 @@ bool InputHandler::processWorker()
 		if (readLen <= 0) {
 			switch (mResampler->drain()) {
 			case Resampler::Result::OUTPUT_READY: {
-				Resampler::ConstBufferView output = mResampler->output();
+				Resampler::ConstBufferView output = mResampler->getOutput();
 				size_t tmp = 0;
 				while(tmp < output.size) {
 					if (mBufferWriter->sizeOfSpace() == 0) {
@@ -214,12 +226,10 @@ bool InputHandler::processWorker()
 						break;
 					}
 					size_t written = mBufferWriter->write(const_cast<unsigned char *>(output.data + tmp), needToWrite);
-					meddbg("[DRAIN] bytes write inside SB = %d\n", written);
 					if (written != needToWrite) {
 						meddbg("End of writting\n");
 						return EOF;
 					} 
-					meddbg("bytes write inside SB = %d\n", written);
 					tmp += written;
 				}
 			}
@@ -227,6 +237,7 @@ bool InputHandler::processWorker()
 				break;				
 			}
 			case Resampler::Result::DRAINED: {
+				meddbg("Resampler already drained\n");
 				break;
 			}
 			case Resampler::Result::ERROR:
@@ -267,7 +278,6 @@ bool InputHandler::processWorker()
 		mBufferWriter->setEndOfStream();
 	}
 
-	meddbg("exit processworker\n");
 	return true;
 }
 
@@ -377,24 +387,14 @@ ssize_t InputHandler::writeToStreamBuffer(unsigned char *buf, size_t size)
 
 		size_t usedES = 0;
 		while (1) {
-			// Resampler::ConstBufferView output = mResampler->output();
-			// size_t size = 0;
-			// while(size < output.size) {
-			// 	size_t needToWrite = std::min(output.size, mBufferWriter->sizeOfSpace());
-			// 	size written = mBufferWriter->write(const_cast<unsigned char *>(output.data + size), needToWrite);
-			// 	size += needToWrite;
-			// }
-
 			unsigned char *buffPCM = buf;
-			size_t writableBytes = mResampler->getPendingInputBytes();
-			meddbg("writable bytes = %d\n", writableBytes);
+			size_t writableBytes = mResampler->getRemainingInputBytes();
 
 			if (writableBytes == 0) {
 				meddbg("Invalid Resampler state\n");
-				return -1;
+				return EOF;
 			}
 			size_t sizePCM = std::min(mProcessBufferSize, writableBytes);
-			meddbg("sizePCM = %d\n", sizePCM);
 
 			ret = getPCM(buffES, sizeES, &usedES, &buffPCM, &sizePCM);
 			if (ret < 0) {
@@ -402,11 +402,9 @@ ssize_t InputHandler::writeToStreamBuffer(unsigned char *buf, size_t size)
 				return ret;
 			}
 			if (ret == 0) {
-				//means decoder want more encoded data, rechannelBuffer is not full yet.
 				break;
 			}
 			if (mResampler->pushData(buffPCM, sizePCM) != writableBytes) {
-				meddbg("Need more encoded data\n");
 				continue;
 			}
 
@@ -420,27 +418,24 @@ ssize_t InputHandler::writeToStreamBuffer(unsigned char *buf, size_t size)
 				continue;
 			}
 			
-			Resampler::ConstBufferView output = mResampler->output();
-			meddbg("output size = %d\n", output.size);
+			Resampler::ConstBufferView output = mResampler->getOutput();
 			size_t tmp = 0;
 			while(tmp < output.size) {
 				if (mBufferWriter->sizeOfSpace() == 0) {
 					sleepWorker();
 				}
 				size_t needToWrite = std::min(output.size - tmp, mBufferWriter->sizeOfSpace());
-				meddbg("needToWrite = %d\n", needToWrite);
 				if (needToWrite == 0) {
 					break;
 				}
 				size_t written = mBufferWriter->write(const_cast<unsigned char *>(output.data + tmp), needToWrite);
-				meddbg("bytes write inside SB = %d\n", written);
 				if (written != needToWrite) {
 					meddbg("End of writting\n");
 					return EOF;
 				}
 				tmp += written;
 			}
-			if(!mResampler->consumeOutput()) {
+			if(!mResampler->releaseOutput()) {
 				meddbg("Resampler::consumeOutput failed!\n");
 			}
  		}

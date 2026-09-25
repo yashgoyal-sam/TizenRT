@@ -91,7 +91,7 @@ size_t StreamBufferReader::read(unsigned char *buf, size_t size, bool sync, std:
 	// Writer may be waiting for more spaces, so it's necessary to notify after reading.
 	mStream->getCondv().notify_one();
 
-	meddbg("read %lu\n", rlen);
+	medvdbg("read %lu\n", rlen);
 	return rlen;
 }
 

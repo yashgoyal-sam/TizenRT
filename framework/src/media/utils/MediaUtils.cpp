@@ -1450,7 +1450,7 @@ void mergeChannel(void *dataL, unsigned int *framesL, void *dataR, unsigned int 
 	for(int32_t i = (int32_t)maxFrames - 1; i >= 0; i--)
 	{
 		int16_t leftSample = ((unsigned int)i < *framesL) ? main[i] : 0;
-		int16_t rightSample = ((unsigned int)i < *framesL) ? sub[i] : 0;
+		int16_t rightSample = ((unsigned int)i < *framesR) ? sub[i] : 0;
 		main[2 * i] = leftSample;
 		main[2 * i + 1] = rightSample;
 	}

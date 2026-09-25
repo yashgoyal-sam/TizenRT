@@ -53,8 +53,7 @@ public:
 	ssize_t read(unsigned char *buf, size_t size, std::chrono::milliseconds timeout = std::chrono::milliseconds(0));
 	void setLoop(bool loop);
 	void setBufferState(buffer_state_t state);
-	bool startBuffering(size_t size);
-	void set_output_audio_capabilities(unsigned int sampleRate, unsigned int channels, int format);
+	bool startBuffering(unsigned int sampleRate, unsigned int channels, unsigned int format, size_t size);
 
 	virtual void onBufferOverrun() override;
 	virtual void onBufferUnderrun() override;
@@ -93,9 +92,6 @@ private:
 	size_t mTotalBytes;
 	std::unique_ptr<unsigned char[]> mProcessBuffer;
 	size_t mProcessBufferSize;
-	unsigned int mOutputChannels;
-	unsigned int mOutputSampleRate;
-	unsigned int mOutputFormat;
 	std::shared_ptr<Resampler> mResampler;
 };
 } // namespace stream
