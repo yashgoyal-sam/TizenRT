@@ -51,6 +51,7 @@ InputHandler::InputHandler() :
 	mTotalBytes(0),
 	mProcessBuffer(nullptr),
 	mProcessBufferSize(0),
+	mPendingPcmBytes(0),
 	mResampleBuffer(nullptr),
 	mResampleBufferSize(0),
 	mResampler(nullptr)
@@ -100,6 +101,7 @@ bool InputHandler::close()
 	mCondv.notify_one();
 	mProcessBuffer.reset();
 	mProcessBufferSize = 0;
+	mPendingPcmBytes = 0;
 	mResampleBuffer.reset();
 	mResampleBufferSize = 0;
 	mResampler.reset();
@@ -116,7 +118,9 @@ int InputHandler::seekTo(off_t offset)
 
 	if (mResampler) {
 		mResampler->reset();
-	}   
+	}
+
+	mPendingPcmBytes = 0;
 
 	return ret;
 }
@@ -143,6 +147,7 @@ void InputHandler::resetWorker()
 	if (mResampler) {
 		mResampler->reset();
 	}
+	mPendingPcmBytes = 0;
 }
 
 bool InputHandler::startBuffering(unsigned int outputSampleRate, unsigned int outputChannel, unsigned int outputBytesPerFormat, size_t outputPeriodBytes)
@@ -223,8 +228,11 @@ bool InputHandler::processWorker()
 			meddbg("Invalid available space\n");
 			size = mProcessBufferSize;
 		}
+		if (size > mProcessBufferSize - mPendingPcmBytes) {
+			size = mProcessBufferSize - mPendingPcmBytes;
+		}
 
-		ssize_t readLen = readFromSource(mProcessBuffer.get(), size);
+		ssize_t readLen = readFromSource(mProcessBuffer.get() + mPendingPcmBytes, size);
 		if (readLen <= 0) {
 			// Error occurred, or inputting finished
 			if (!mIsLooping) {
@@ -234,6 +242,7 @@ bool InputHandler::processWorker()
 			}
 			/* If it is looping mode, then seek to 0 and readFromSource again */
 			if (mInputDataSource->seekTo(0) == OK) {
+				mPendingPcmBytes = 0;
 				readLen = readFromSource(mProcessBuffer.get(), size);
 			} else {
 				meddbg("seek failed!!\n");
@@ -245,7 +254,7 @@ bool InputHandler::processWorker()
 			readLen = size;
 		}
 
-		ssize_t writeLen = writeToStreamBuffer(mProcessBuffer.get(), (size_t)readLen);
+		ssize_t writeLen = writeToStreamBuffer(mProcessBuffer.get() + mPendingPcmBytes, (size_t)readLen);
 		if (writeLen <= 0) {
 			meddbg("write to stream buffer failed!\n");
 			mBufferWriter->setEndOfStream();
@@ -370,7 +379,7 @@ ssize_t InputHandler::writeToStreamBuffer(unsigned char *buf, size_t size)
 		while (1) {
 			unsigned char *buffPCM = buf;
 			// Requested decoded data size is equal to output buffer size
-			size_t sizePCM = mProcessBufferSize;
+			size_t sizePCM = mProcessBufferSize - mPendingPcmBytes;
 			sizePCM = std::min(sizePCM, mResampler->getInputBytesPerProcess());
 			ret = getPCM(buffES, sizeES, &usedES, &buffPCM, &sizePCM);
 			if (ret < 0) {
@@ -381,11 +390,20 @@ ssize_t InputHandler::writeToStreamBuffer(unsigned char *buf, size_t size)
 				// want more data
 				break;
 			}
+			
+			sizePCM += mPendingPcmBytes;
+			size_t inputBytesPerFrame = mInputDataSource->getChannels() * (audioFormatToBits(mInputDataSource->getPcmFormat()) >> 3);
+			size_t remainingPcmBytes = sizePCM % inputBytesPerFrame;
+			sizePCM -= remainingPcmBytes;
+			mPendingPcmBytes = remainingPcmBytes;
 
-			ssize_t resampledSize = mResampler->process(buffPCM, sizePCM, mResampleBuffer.get(), mResampleBufferSize);
+			ssize_t resampledSize = mResampler->process(mProcessBuffer.get(), sizePCM, mResampleBuffer.get(), mResampleBufferSize);
 			if (resampledSize < 0) {
 				meddbg("Resampler process failed!\n");
 				return EOF;
+			}
+			if (remainingPcmBytes > 0) {
+				memmove(mProcessBuffer.get(), mProcessBuffer.get() + sizePCM, remainingPcmBytes);
 			}
 			if (resampledSize == 0) {
 				continue;
